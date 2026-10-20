@@ -1,0 +1,28 @@
+# TCL Google TV (Android 14, device G13), debloat list
+# Reversible: packages disabled for user 0, never uninstalled.
+# Features kept: Chromecast, mirroring, USB media, ambient, Google TV, Play Games, browser, Live TV, Bluetooth, voice.
+
+# TCL telemetry, accounts and ads
+com.tcl.ttvs
+com.tcl.messagebox
+com.tcl.partnercustomizer
+com.tcl.waterfall.overseas
+com.tcl.guard
+com.tcl.logkit
+
+# Google extras (telemetry / auto-install / Home hijack)
+com.google.android.feedback
+android.autoinstalls.config.google.gtvpai
+com.google.android.tungsten.setupwraith
+
+# Preinstalled promoted junk
+com.community.mbox.tv
+fusion.android.tv.demo
+com.mediatek.MtkDemo
+com.amazon.amazonvideo.livingroom
+com.loklok.litethird
+com.wbd.stream
+com.kltra.tvlite
+com.stremio.one
+com.google.android.play.games
+com.google.android.videos
