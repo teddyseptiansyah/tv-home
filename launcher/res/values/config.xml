@@ -31,4 +31,15 @@
 
     <!-- Tiles per row in the grid. -->
     <integer name="columns">5</integer>
+
+    <!-- City shown on the home screen, and its coordinates for the weather and prayer times.
+         Default: Jakarta. Find yours by searching "<city> latitude longitude". -->
+    <string name="location_name" translatable="false">Jakarta</string>
+    <string name="location_lat" translatable="false">-6.2088</string>
+    <string name="location_lng" translatable="false">106.8456</string>
+
+    <!-- Prayer time method (Kemenag RI: Fajr 20, Isha 18) and minutes of ihtiyat added to each time. -->
+    <integer name="prayer_fajr_angle">20</integer>
+    <integer name="prayer_isha_angle">18</integer>
+    <integer name="prayer_ihtiyat_min">2</integer>
 </resources>
