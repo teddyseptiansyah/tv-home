@@ -55,8 +55,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Apple TV style home screen: clock top-left, pills top-right, the focused dock app's name over an
- * ambient glow, a dock of pinned apps, and every other app in a grid that scrolls up on Down.
+ * Apple TV style home screen: the focused app's name top-left, a clock pill and icon buttons
+ * top-right, a dock of pinned apps with the next row peeking in under it, and every other app in a
+ * grid that scrolls up on Down.
  * Plain framework views only (no AndroidX), no network, no background work.
  */
 public class MainActivity extends Activity {
@@ -93,7 +94,9 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable rotateWallpaper = this::nextWallpaper;
     static final long WALLPAPER_INTERVAL_MS = 10 * 60 * 1000;
-    private TextView greeting, clock, ampm, date, title, appsLabel;
+    static final int PEEK_DP = 22;     // how much of the first grid row shows under the dock
+    static final int DOCK_GAP_DP = 22; // space between the dock band and that peeking row
+    private TextView clock, date, title;
     private View wifiPill;
     private int glowColor = 0xFF3A3A3A;
     private ValueAnimator glowAnim;
@@ -224,11 +227,11 @@ public class MainActivity extends Activity {
         content.setClipToPadding(false);
         scroll.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
-        // Hero: exactly one screen tall, header on top, title + dock at the bottom.
+        // Hero: one screen minus a thin strip, so the first grid row peeks in under the dock.
         hero = new FrameLayout(this);
         hero.setClipChildren(false);
         int screenH = getResources().getDisplayMetrics().heightPixels;
-        content.addView(hero, new LinearLayout.LayoutParams(-1, screenH));
+        content.addView(hero, new LinearLayout.LayoutParams(-1, screenH - dp(PEEK_DP)));
 
         hero.addView(buildHeader(), lp(-1, -2, Gravity.TOP, dp(48), dp(36), dp(48), 0));
 
@@ -236,31 +239,20 @@ public class MainActivity extends Activity {
         bottom.setOrientation(LinearLayout.VERTICAL);
         bottom.setClipChildren(false);
         bottom.setClipToPadding(false);
-        hero.addView(bottom, lp(-1, -2, Gravity.BOTTOM, dp(48), 0, dp(48), dp(30)));
-
-        title = text(34, "sans-serif-light", Color.WHITE);
-        title.setShadowLayer(dp(18), 0, 0, 0x66000000);
-        title.setSingleLine(true);
-        bottom.addView(title, new LinearLayout.LayoutParams(-2, -2));
-        ((LinearLayout.LayoutParams) title.getLayoutParams()).setMargins(dp(8), 0, 0, dp(14));
+        hero.addView(bottom, lp(-1, -2, Gravity.BOTTOM, dp(48), 0, dp(48), dp(DOCK_GAP_DP)));
 
         dockRow = new LinearLayout(this);
         dockRow.setOrientation(LinearLayout.HORIZONTAL);
-        dockRow.setGravity(Gravity.CENTER);
+        dockRow.setGravity(Gravity.CENTER_VERTICAL);
         dockRow.setClipChildren(false);
         dockRow.setClipToPadding(false);
         dockRow.setPadding(dp(20), dp(22), dp(20), dp(22));
         GradientDrawable band = new GradientDrawable();
-        band.setCornerRadius(dp(26));
-        band.setColor(0x1FFFFFFF);
-        band.setStroke(dp(1), 0x14FFFFFF);
+        band.setCornerRadius(dp(24));
+        band.setColor(0x4D000000);
+        band.setStroke(dp(1), 0x1AFFFFFF);
         dockRow.setBackground(band);
         bottom.addView(dockRow, new LinearLayout.LayoutParams(-1, -2));
-
-        appsLabel = text(11, "sans-serif-medium", 0x99FFFFFF);
-        appsLabel.setText("ALL APPS");
-        appsLabel.setLetterSpacing(0.22f);
-        content.addView(appsLabel, llp(-2, -2, dp(68), dp(8), 0, dp(18)));
 
         grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
@@ -274,34 +266,41 @@ public class MainActivity extends Activity {
         FrameLayout header = new FrameLayout(this);
         header.setClipChildren(false);
 
+        // Top-left: the focused app's name, big, with the date as a small caption above it.
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        greeting = text(10, "sans-serif-medium", 0xB3FFFFFF);
-        greeting.setLetterSpacing(0.25f);
-        greeting.setSingleLine(true);
-        greeting.setPadding(0, 0, dp(16), 0);
-        left.addView(greeting);
-
-        LinearLayout clockRow = new LinearLayout(this);
-        clockRow.setGravity(Gravity.BOTTOM);
-        clock = text(54, "sans-serif-thin", Color.WHITE);
-        clock.setIncludeFontPadding(false);
-        clockRow.addView(clock);
-        ampm = text(12, "sans-serif-light", 0xCCFFFFFF);
-        clockRow.addView(ampm, llp(-2, -2, dp(6), 0, 0, dp(8)));
-        left.addView(clockRow, llp(-2, -2, 0, dp(2), 0, dp(2)));
-
         date = text(10, "sans-serif-medium", 0x99FFFFFF);
         date.setSingleLine(true);
         date.setPadding(0, 0, dp(16), 0); // letterSpacing is not counted in the measured width
         date.setLetterSpacing(0.22f);
+        date.setShadowLayer(dp(10), 0, dp(1), 0xB3000000);
         left.addView(date);
-        for (TextView t : new TextView[]{greeting, clock, ampm, date}) t.setShadowLayer(dp(10), 0, dp(1), 0xB3000000);
-        header.addView(left, new FrameLayout.LayoutParams(dp(420), -2, Gravity.START | Gravity.TOP));
 
+        title = text(38, "sans-serif-condensed", Color.WHITE);
+        title.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        title.setAllCaps(true);
+        title.setLetterSpacing(0.03f);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setPadding(0, 0, dp(16), 0);
+        title.setShadowLayer(dp(14), 0, dp(2), 0x99000000);
+        left.addView(title, llp(-2, -2, 0, dp(4), 0, 0));
+        header.addView(left, new FrameLayout.LayoutParams(dp(480), -2, Gravity.START | Gravity.TOP));
+
+        // Top-right: a small clock pill, then icon buttons (the label shows while one is focused).
         LinearLayout right = new LinearLayout(this);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.setClipChildren(false);
+
+        LinearLayout timePill = new LinearLayout(this);
+        timePill.setGravity(Gravity.CENTER);
+        timePill.setPadding(dp(14), 0, dp(14), 0);
+        timePill.setBackground(pillBackground());
+        clock = text(12, "sans-serif-medium", Color.WHITE);
+        clock.setIncludeFontPadding(false);
+        timePill.addView(clock);
+        right.addView(timePill, llp(-2, dp(30), 0, 0, 0, 0));
+
         View inputs = pill("Inputs", R.drawable.ic_inputs);
         inputs.setOnClickListener(v -> showInputs(v));
         wifiPill = pill("Wi-Fi", R.drawable.ic_wifi);
@@ -316,11 +315,20 @@ public class MainActivity extends Activity {
         return header;
     }
 
+    private GradientDrawable pillBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(15));
+        bg.setColor(0x66000000);
+        bg.setStroke(dp(1), 0x33FFFFFF);
+        return bg;
+    }
+
+    /** A round icon button; it widens to show its label while focused. */
     private View pill(String label, int iconRes) {
         LinearLayout p = new LinearLayout(this);
         p.setOrientation(LinearLayout.HORIZONTAL);
-        p.setGravity(Gravity.CENTER_VERTICAL);
-        p.setPadding(dp(14), 0, dp(14), 0);
+        p.setGravity(Gravity.CENTER);
+        p.setPadding(dp(6), 0, dp(6), 0);
         p.setFocusable(true);
         p.setId(View.generateViewId());
 
@@ -328,23 +336,22 @@ public class MainActivity extends Activity {
         icon.setImageResource(iconRes);
         icon.setColorFilter(0xE6FFFFFF);
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(18), dp(18));
-        ilp.setMargins(0, 0, dp(8), 0);
-        p.addView(icon, ilp);
+        p.addView(icon, new LinearLayout.LayoutParams(dp(18), dp(18)));
 
         TextView text = text(11, "sans-serif-medium", 0xE6FFFFFF);
         text.setText(label);
+        text.setSingleLine(true);
+        text.setPadding(dp(8), 0, dp(6), 0);
+        text.setVisibility(View.GONE);
         p.addView(text);
 
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(15));
-        bg.setColor(0x66000000);
-        bg.setStroke(dp(1), 0x33FFFFFF);
+        GradientDrawable bg = pillBackground();
         p.setBackground(bg);
 
         p.setOnFocusChangeListener((v, has) -> {
             bg.setColor(has ? 0xF2FFFFFF : 0x66000000);
             text.setTextColor(has ? 0xFF111111 : 0xE6FFFFFF);
+            text.setVisibility(has ? View.VISIBLE : View.GONE);
             icon.setColorFilter(has ? 0xFF111111 : 0xE6FFFFFF);
             v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f)
                     .setInterpolator(new OvershootInterpolator(2f)).setDuration(220).start();
@@ -388,8 +395,7 @@ public class MainActivity extends Activity {
         gridCards.clear();
 
         int dcount = dock.size();
-        int maxW = (int)(getResources().getDisplayMetrics().widthPixels * 0.19f);
-        int dW = (int)(getResources().getDisplayMetrics().widthPixels * 0.15f);
+        int dW = tileWidth();
         for (int i = 0; i < dcount; i++) {
             View tile = tile(dock.get(i), true);
             LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) tile.getLayoutParams();
@@ -399,10 +405,10 @@ public class MainActivity extends Activity {
                 p.width = dW;
                 p.height = -2;
             }
-            p.setMargins(i == 0 ? 0 : dp(8), 0, i == dcount - 1 ? 0 : dp(8), 0);
+            p.setMargins(i == 0 ? 0 : dp(10), 0, i == dcount - 1 ? 0 : dp(10), 0);
             dockRow.addView(tile, p);
         }
-        dockRow.setGravity(Gravity.CENTER);
+        dockRow.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout row = null;
         for (int i = 0; i < rest.size(); i++) {
@@ -423,7 +429,6 @@ public class MainActivity extends Activity {
             p.setMargins(dp(10), 0, i == cols - 1 ? 0 : dp(10), 0);
             row.addView(new View(this), p);
         }
-        appsLabel.setVisibility(rest.isEmpty() ? View.GONE : View.VISIBLE);
         wireFocus();
 
         if (!dock.isEmpty()) { title.setText(dock.get(0).label); setGlow(dock.get(0).color); }
@@ -439,7 +444,7 @@ public class MainActivity extends Activity {
         box.setClipChildren(false);
         box.setClipToPadding(false);
         if (inDock) {
-            box.setLayoutParams(new LinearLayout.LayoutParams((int)(getResources().getDisplayMetrics().widthPixels * 0.15f), -2));
+            box.setLayoutParams(new LinearLayout.LayoutParams(tileWidth(), -2));
         }
 
         FrameLayout card = new AspectFrame(this);
@@ -448,34 +453,20 @@ public class MainActivity extends Activity {
         card.setClickable(true);
         card.setTag(app);
         card.setClipToOutline(true);
-        if (inDock) {
-            card.setOutlineProvider(null);
-        } else {
-            card.setOutlineProvider(new ViewOutlineProvider() {
-                @Override public void getOutline(View v, Outline o) {
-                    o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), dp(10));
-                }
-            });
-        }
+        card.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View v, Outline o) {
+                o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), dp(10));
+            }
+        });
         GradientDrawable bg = new GradientDrawable();
-        if (inDock) {
-            bg.setColor(Color.TRANSPARENT);
-        } else {
-            bg.setColor(app.isBanner ? 0xFF1C1C1E : darken(app.color, 0.45f));
-        }
+        bg.setColor(app.isBanner ? 0xFF1C1C1E : darken(app.color, 0.45f));
         card.setBackground(bg);
 
         ImageView img = new ImageView(this);
         img.setImageDrawable(app.art);
         if (app.isBanner) {
-            if (inDock) {
-                img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                card.addView(img, new FrameLayout.LayoutParams(-1, -1));
-                img.setPadding(0, 0, 0, 0);
-            } else {
-                img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                card.addView(img, new FrameLayout.LayoutParams(-1, -1));
-            }
+            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(img, new FrameLayout.LayoutParams(-1, -1));
         } else {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             card.addView(img, new FrameLayout.LayoutParams(-1, -1));
@@ -507,7 +498,7 @@ public class MainActivity extends Activity {
                 .setComponent(app.component)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)));
         card.setOnFocusChangeListener((v, has) -> {
-            float s = has ? (inDock ? 1.12f : 1.1f) : 1f;
+            float s = has ? (inDock ? 1.14f : 1.1f) : 1f;
             v.animate().scaleX(s).scaleY(s).translationZ(has ? dp(14) : 0)
                     .setInterpolator(has ? new OvershootInterpolator(1.8f) : new DecelerateInterpolator())
                     .setDuration(has ? 320 : 200).start();
@@ -624,7 +615,7 @@ public class MainActivity extends Activity {
         pw.setElevation(dp(16));
         pw.setOnDismissListener(() -> { inputsPopup = null; anchor.requestFocus(); });
         inputsPopup = pw;
-        pw.showAsDropDown(anchor, 0, dp(8), Gravity.START);
+        pw.showAsDropDown(anchor, 0, dp(8), Gravity.END);
         rows.get(0).requestFocus();
     }
 
@@ -658,10 +649,9 @@ public class MainActivity extends Activity {
     private void updateClock() {
         Calendar now = Calendar.getInstance();
         int h = now.get(Calendar.HOUR_OF_DAY);
-        greeting.setText(h < 5 ? "GOOD NIGHT" : h < 12 ? "GOOD MORNING" : h < 17 ? "GOOD AFTERNOON" : "GOOD EVENING");
         boolean is24 = android.text.format.DateFormat.is24HourFormat(this);
-        clock.setText(new SimpleDateFormat(is24 ? "H:mm" : "h:mm", Locale.getDefault()).format(now.getTime()));
-        ampm.setText(is24 ? "" : (h < 12 ? "AM" : "PM"));
+        String t = new SimpleDateFormat(is24 ? "H:mm" : "h:mm", Locale.getDefault()).format(now.getTime());
+        clock.setText(is24 ? t : t + (h < 12 ? " AM" : " PM"));
         date.setText(new SimpleDateFormat("EEEE  d MMMM", Locale.getDefault()).format(now.getTime()).toUpperCase(Locale.getDefault()));
     }
 
@@ -843,6 +833,12 @@ public class MainActivity extends Activity {
         t.setTypeface(Typeface.create(family, Typeface.NORMAL));
         t.setTextColor(color);
         return t;
+    }
+
+    /** Dock and grid tiles share one width, so the dock lines up with the grid columns. */
+    private int tileWidth() {
+        int w = getResources().getDisplayMetrics().widthPixels;
+        return (w - 2 * dp(68) - (cols - 1) * dp(20)) / cols;
     }
 
     private int dp(float v) {
