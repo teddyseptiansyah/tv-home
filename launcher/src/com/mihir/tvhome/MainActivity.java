@@ -93,7 +93,8 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable rotateWallpaper = this::nextWallpaper;
     static final long WALLPAPER_INTERVAL_MS = 10 * 60 * 1000;
-    private TextView greeting, clock, ampm, date, title, wifiPill, appsLabel;
+    private TextView greeting, clock, ampm, date, title, appsLabel;
+    private View wifiPill;
     private int glowColor = 0xFF3A3A3A;
     private ValueAnimator glowAnim;
     private int lastFocusedId = View.NO_ID;
@@ -301,13 +302,13 @@ public class MainActivity extends Activity {
         LinearLayout right = new LinearLayout(this);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.setClipChildren(false);
-        TextView inputs = pill("Inputs", "⇥");
+        View inputs = pill("Inputs", R.drawable.ic_inputs);
         inputs.setOnClickListener(v -> showInputs(v));
-        wifiPill = pill("Wi-Fi", "◉");
+        wifiPill = pill("Wi-Fi", R.drawable.ic_wifi);
         wifiPill.setOnClickListener(v -> launch(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        TextView settings = pill("Settings", "⚙");
+        View settings = pill("Settings", R.drawable.ic_settings);
         settings.setOnClickListener(v -> launch(new Intent(Settings.ACTION_SETTINGS)));
-        for (TextView p : new TextView[]{inputs, wifiPill, settings}) {
+        for (View p : new View[]{inputs, wifiPill, settings}) {
             right.addView(p, llp(-2, dp(30), dp(10), 0, 0, 0));
             pills.add(p);
         }
@@ -315,25 +316,41 @@ public class MainActivity extends Activity {
         return header;
     }
 
-    private TextView pill(String label, String glyph) {
-        TextView p = text(11, "sans-serif-medium", 0xE6FFFFFF);
-        p.setText(glyph + "  " + label);
-        p.setGravity(Gravity.CENTER);
+    private View pill(String label, int iconRes) {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.HORIZONTAL);
+        p.setGravity(Gravity.CENTER_VERTICAL);
         p.setPadding(dp(14), 0, dp(14), 0);
         p.setFocusable(true);
         p.setId(View.generateViewId());
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(0xE6FFFFFF);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        ilp.setMargins(0, 0, dp(8), 0);
+        p.addView(icon, ilp);
+
+        TextView text = text(11, "sans-serif-medium", 0xE6FFFFFF);
+        text.setText(label);
+        p.addView(text);
+
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(15));
         bg.setColor(0x66000000);
         bg.setStroke(dp(1), 0x33FFFFFF);
         p.setBackground(bg);
+
         p.setOnFocusChangeListener((v, has) -> {
             bg.setColor(has ? 0xF2FFFFFF : 0x66000000);
-            ((TextView) v).setTextColor(has ? 0xFF111111 : 0xE6FFFFFF);
+            text.setTextColor(has ? 0xFF111111 : 0xE6FFFFFF);
+            icon.setColorFilter(has ? 0xFF111111 : 0xE6FFFFFF);
             v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f)
                     .setInterpolator(new OvershootInterpolator(2f)).setDuration(220).start();
             if (has) { lastFocusedId = v.getId(); scroll.smoothScrollTo(0, 0); fadeGlow(1f); }
         });
+        p.setTag(text);
         return p;
     }
 
@@ -370,12 +387,22 @@ public class MainActivity extends Activity {
         dockCards.clear();
         gridCards.clear();
 
-        for (int i = 0; i < dock.size(); i++) {
+        int dcount = dock.size();
+        int maxW = (int)(getResources().getDisplayMetrics().widthPixels * 0.19f);
+        int dW = (int)(getResources().getDisplayMetrics().widthPixels * 0.15f);
+        for (int i = 0; i < dcount; i++) {
             View tile = tile(dock.get(i), true);
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1f);
-            p.setMargins(i == 0 ? 0 : dp(10), 0, i == dock.size() - 1 ? 0 : dp(10), 0);
+            LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) tile.getLayoutParams();
+            if (p == null) {
+                p = new LinearLayout.LayoutParams(dW, -2);
+            } else {
+                p.width = dW;
+                p.height = -2;
+            }
+            p.setMargins(i == 0 ? 0 : dp(8), 0, i == dcount - 1 ? 0 : dp(8), 0);
             dockRow.addView(tile, p);
         }
+        dockRow.setGravity(Gravity.CENTER);
 
         LinearLayout row = null;
         for (int i = 0; i < rest.size(); i++) {
@@ -411,6 +438,9 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setClipChildren(false);
         box.setClipToPadding(false);
+        if (inDock) {
+            box.setLayoutParams(new LinearLayout.LayoutParams((int)(getResources().getDisplayMetrics().widthPixels * 0.15f), -2));
+        }
 
         FrameLayout card = new AspectFrame(this);
         card.setId(View.generateViewId());
@@ -418,20 +448,34 @@ public class MainActivity extends Activity {
         card.setClickable(true);
         card.setTag(app);
         card.setClipToOutline(true);
-        card.setOutlineProvider(new ViewOutlineProvider() {
-            @Override public void getOutline(View v, Outline o) {
-                o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), dp(10));
-            }
-        });
+        if (inDock) {
+            card.setOutlineProvider(null);
+        } else {
+            card.setOutlineProvider(new ViewOutlineProvider() {
+                @Override public void getOutline(View v, Outline o) {
+                    o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), dp(10));
+                }
+            });
+        }
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(app.isBanner ? 0xFF1C1C1E : darken(app.color, 0.45f));
+        if (inDock) {
+            bg.setColor(Color.TRANSPARENT);
+        } else {
+            bg.setColor(app.isBanner ? 0xFF1C1C1E : darken(app.color, 0.45f));
+        }
         card.setBackground(bg);
 
         ImageView img = new ImageView(this);
         img.setImageDrawable(app.art);
         if (app.isBanner) {
-            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            card.addView(img, new FrameLayout.LayoutParams(-1, -1));
+            if (inDock) {
+                img.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                card.addView(img, new FrameLayout.LayoutParams(-1, -1));
+                img.setPadding(0, 0, 0, 0);
+            } else {
+                img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                card.addView(img, new FrameLayout.LayoutParams(-1, -1));
+            }
         } else {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             card.addView(img, new FrameLayout.LayoutParams(-1, -1));
@@ -631,7 +675,9 @@ public class MainActivity extends Activity {
                 if (wm.getConnectionInfo().getNetworkId() == -1) name = "Offline";
             }
         } catch (SecurityException ignored) { }
-        wifiPill.setText("◉  " + name);
+        if (wifiPill != null && wifiPill.getTag() instanceof TextView) {
+            ((TextView) wifiPill.getTag()).setText(name);
+        }
     }
 
     // ---------------------------------------------------------------- glow
