@@ -146,8 +146,8 @@ public class MainActivity extends Activity {
             lat = Double.parseDouble(getString(R.string.location_lat).trim());
             lng = Double.parseDouble(getString(R.string.location_lng).trim());
         } catch (NumberFormatException e) { // a typo in config.xml must not break the home screen
-            lat = -6.2088;
-            lng = 106.8456;
+            lat = -6.2383;
+            lng = 106.9756;
         }
         fajrAngle = getResources().getInteger(R.integer.prayer_fajr_angle);
         ishaAngle = getResources().getInteger(R.integer.prayer_isha_angle);
