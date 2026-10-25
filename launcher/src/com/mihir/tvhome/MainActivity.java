@@ -16,7 +16,6 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Outline;
-import android.graphics.PorterDuff;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -43,6 +42,10 @@ import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 
+import org.json.JSONObject;
+
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -54,10 +57,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 
 /**
- * Apple TV style home screen: clock top-left, pills top-right, the focused dock app's name over an
- * ambient glow, a dock of pinned apps, and every other app in a grid that scrolls up on Down.
+ * Apple TV style home screen: the focused app's name top-left, a clock pill and icon buttons
+ * top-right, a dock of pinned apps with the next row peeking in under it, and every other app in a
+ * grid that scrolls up on Down. Also shows the city, weather (Open-Meteo, refreshed every 30 min)
+ * and today's prayer times (computed on the device from the coordinates in config.xml).
  * Plain framework views only (no AndroidX), no network, no background work.
  */
 public class MainActivity extends Activity {
@@ -94,8 +100,22 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable rotateWallpaper = this::nextWallpaper;
     static final long WALLPAPER_INTERVAL_MS = 10 * 60 * 1000;
-    private TextView greeting, clock, ampm, date, title, appsLabel;
-    private PillView wifiPill;
+    static final int PEEK_DP = 22;     // how much of the first grid row shows under the dock
+    static final int DOCK_GAP_DP = 22; // space between the dock band and that peeking row
+    private TextView clock, date, title;
+
+    // Location, weather and prayer times; settings live in res/values/config.xml.
+    private String locationName;
+    private double lat, lng;
+    private int fajrAngle, ishaAngle, ihtiyat;
+    private TextView weather;
+    private final TextView[] prayerName = new TextView[5];
+    private final TextView[] prayerTime = new TextView[5];
+    private long weatherAt;
+    private boolean weatherBusy;
+    static final long WEATHER_INTERVAL_MS = 30 * 60 * 1000;
+    private final Runnable refreshWeather = this::fetchWeather;
+    private View wifiPill;
     private int glowColor = 0xFF3A3A3A;
     private ValueAnimator glowAnim;
     private int lastFocusedId = View.NO_ID;
@@ -121,6 +141,17 @@ public class MainActivity extends Activity {
         liveTvPkg = getString(R.string.live_tv_package);
         inputPickerPkg = getString(R.string.input_picker_package);
         cols = getResources().getInteger(R.integer.columns);
+        locationName = getString(R.string.location_name);
+        try {
+            lat = Double.parseDouble(getString(R.string.location_lat).trim());
+            lng = Double.parseDouble(getString(R.string.location_lng).trim());
+        } catch (NumberFormatException e) { // a typo in config.xml must not break the home screen
+            lat = -6.2383;
+            lng = 106.9756;
+        }
+        fajrAngle = getResources().getInteger(R.integer.prayer_fajr_angle);
+        ishaAngle = getResources().getInteger(R.integer.prayer_isha_angle);
+        ihtiyat = getResources().getInteger(R.integer.prayer_ihtiyat_min);
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
@@ -145,6 +176,9 @@ public class MainActivity extends Activity {
         registerReceiver(tick, tf);
         updateClock();
         updateWifi();
+        long sinceWeather = SystemClock.elapsedRealtime() - weatherAt;
+        if (weatherAt == 0 || sinceWeather >= WEATHER_INTERVAL_MS) fetchWeather();
+        else scheduleWeather(WEATHER_INTERVAL_MS - sinceWeather);
         View last = lastFocusedId == View.NO_ID ? null : findViewById(lastFocusedId);
         if (last == null && !dockCards.isEmpty()) last = dockCards.get(0);
         if (last != null) last.requestFocus();
@@ -160,6 +194,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(rotateWallpaper);
+        handler.removeCallbacks(refreshWeather);
         unregisterReceiver(tick);
         if (inputsPopup != null) inputsPopup.dismiss();
     }
@@ -225,11 +260,11 @@ public class MainActivity extends Activity {
         content.setClipToPadding(false);
         scroll.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
-        // Hero: exactly one screen tall, header on top, title + dock at the bottom.
+        // Hero: one screen minus a thin strip, so the first grid row peeks in under the dock.
         hero = new FrameLayout(this);
         hero.setClipChildren(false);
         int screenH = getResources().getDisplayMetrics().heightPixels;
-        content.addView(hero, new LinearLayout.LayoutParams(-1, screenH));
+        content.addView(hero, new LinearLayout.LayoutParams(-1, screenH - dp(PEEK_DP)));
 
         hero.addView(buildHeader(), lp(-1, -2, Gravity.TOP, dp(48), dp(36), dp(48), 0));
 
@@ -237,31 +272,20 @@ public class MainActivity extends Activity {
         bottom.setOrientation(LinearLayout.VERTICAL);
         bottom.setClipChildren(false);
         bottom.setClipToPadding(false);
-        hero.addView(bottom, lp(-1, -2, Gravity.BOTTOM, dp(48), 0, dp(48), dp(30)));
-
-        title = text(34, "sans-serif-light", Color.WHITE);
-        title.setShadowLayer(dp(18), 0, 0, 0x66000000);
-        title.setSingleLine(true);
-        bottom.addView(title, new LinearLayout.LayoutParams(-2, -2));
-        ((LinearLayout.LayoutParams) title.getLayoutParams()).setMargins(dp(8), 0, 0, dp(14));
+        hero.addView(bottom, lp(-1, -2, Gravity.BOTTOM, dp(48), 0, dp(48), dp(DOCK_GAP_DP)));
 
         dockRow = new LinearLayout(this);
         dockRow.setOrientation(LinearLayout.HORIZONTAL);
-        dockRow.setGravity(Gravity.CENTER);
+        dockRow.setGravity(Gravity.CENTER_VERTICAL);
         dockRow.setClipChildren(false);
         dockRow.setClipToPadding(false);
         dockRow.setPadding(dp(20), dp(22), dp(20), dp(22));
         GradientDrawable band = new GradientDrawable();
-        band.setCornerRadius(dp(26));
-        band.setColor(0x1FFFFFFF);
-        band.setStroke(dp(1), 0x14FFFFFF);
+        band.setCornerRadius(dp(24));
+        band.setColor(0x4D000000);
+        band.setStroke(dp(1), 0x1AFFFFFF);
         dockRow.setBackground(band);
         bottom.addView(dockRow, new LinearLayout.LayoutParams(-1, -2));
-
-        appsLabel = text(11, "sans-serif-medium", 0x99FFFFFF);
-        appsLabel.setText("ALL APPS");
-        appsLabel.setLetterSpacing(0.22f);
-        content.addView(appsLabel, llp(-2, -2, dp(68), dp(8), 0, dp(18)));
 
         grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
@@ -275,41 +299,79 @@ public class MainActivity extends Activity {
         FrameLayout header = new FrameLayout(this);
         header.setClipChildren(false);
 
+        // Top-left: the focused app's name, big, with the date as a small caption above it.
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        greeting = text(10, "sans-serif-medium", 0xB3FFFFFF);
-        greeting.setLetterSpacing(0.25f);
-        greeting.setSingleLine(true);
-        greeting.setPadding(0, 0, dp(16), 0);
-        left.addView(greeting);
-
-        LinearLayout clockRow = new LinearLayout(this);
-        clockRow.setGravity(Gravity.BOTTOM);
-        clock = text(54, "sans-serif-thin", Color.WHITE);
-        clock.setIncludeFontPadding(false);
-        clockRow.addView(clock);
-        ampm = text(12, "sans-serif-light", 0xCCFFFFFF);
-        clockRow.addView(ampm, llp(-2, -2, dp(6), 0, 0, dp(8)));
-        left.addView(clockRow, llp(-2, -2, 0, dp(2), 0, dp(2)));
-
         date = text(10, "sans-serif-medium", 0x99FFFFFF);
         date.setSingleLine(true);
         date.setPadding(0, 0, dp(16), 0); // letterSpacing is not counted in the measured width
         date.setLetterSpacing(0.22f);
+        date.setShadowLayer(dp(10), 0, dp(1), 0xB3000000);
         left.addView(date);
-        for (TextView t : new TextView[]{greeting, clock, ampm, date}) t.setShadowLayer(dp(10), 0, dp(1), 0xB3000000);
-        header.addView(left, new FrameLayout.LayoutParams(dp(420), -2, Gravity.START | Gravity.TOP));
 
+        title = text(38, "sans-serif-condensed", Color.WHITE);
+        title.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        title.setAllCaps(true);
+        title.setLetterSpacing(0.03f);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setPadding(0, 0, dp(16), 0);
+        title.setShadowLayer(dp(14), 0, dp(2), 0x99000000);
+        left.addView(title, llp(-2, -2, 0, dp(4), 0, 0));
+
+        // Today's five prayer times; the next one is highlighted.
+        LinearLayout prayers = new LinearLayout(this);
+        prayers.setOrientation(LinearLayout.HORIZONTAL);
+        prayers.setPadding(dp(14), dp(8), dp(14), dp(8));
+        prayers.setBackground(pillBackground());
+        String[] names = {"SUBUH", "DZUHUR", "ASHAR", "MAGHRIB", "ISYA"};
+        for (int i = 0; i < 5; i++) {
+            LinearLayout cell = new LinearLayout(this);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            cell.setGravity(Gravity.CENTER_HORIZONTAL);
+            prayerName[i] = text(8, "sans-serif-medium", 0x99FFFFFF);
+            prayerName[i].setText(names[i]);
+            prayerName[i].setLetterSpacing(0.15f);
+            prayerTime[i] = text(13, "sans-serif-medium", 0xB3FFFFFF);
+            prayerTime[i].setText("--:--");
+            cell.addView(prayerName[i]);
+            cell.addView(prayerTime[i]);
+            prayers.addView(cell, llp(-2, -2, i == 0 ? 0 : dp(18), 0, 0, 0));
+        }
+        left.addView(prayers, llp(-2, -2, 0, dp(12), 0, 0));
+        header.addView(left, new FrameLayout.LayoutParams(dp(440), -2, Gravity.START | Gravity.TOP));
+
+        // Top-right: a small clock pill, then icon buttons (the label shows while one is focused).
         LinearLayout right = new LinearLayout(this);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.setClipChildren(false);
-        PillView inputs = pill("Inputs", R.drawable.ic_inputs);
+
+        LinearLayout weatherPill = new LinearLayout(this);
+        weatherPill.setGravity(Gravity.CENTER);
+        weatherPill.setPadding(dp(14), 0, dp(14), 0);
+        weatherPill.setBackground(pillBackground());
+        weather = text(12, "sans-serif-medium", Color.WHITE);
+        weather.setIncludeFontPadding(false);
+        weather.setText("--\u00B0");
+        weatherPill.addView(weather);
+        right.addView(weatherPill, llp(-2, dp(30), 0, 0, 0, 0));
+
+        LinearLayout timePill = new LinearLayout(this);
+        timePill.setGravity(Gravity.CENTER);
+        timePill.setPadding(dp(14), 0, dp(14), 0);
+        timePill.setBackground(pillBackground());
+        clock = text(12, "sans-serif-medium", Color.WHITE);
+        clock.setIncludeFontPadding(false);
+        timePill.addView(clock);
+        right.addView(timePill, llp(-2, dp(30), dp(10), 0, 0, 0));
+
+        View inputs = pill("Inputs", R.drawable.ic_inputs);
         inputs.setOnClickListener(v -> showInputs(v));
         wifiPill = pill("Wi-Fi", R.drawable.ic_wifi);
         wifiPill.setOnClickListener(v -> launch(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        PillView settings = pill("Settings", R.drawable.ic_settings);
+        View settings = pill("Settings", R.drawable.ic_settings);
         settings.setOnClickListener(v -> launch(new Intent(Settings.ACTION_SETTINGS)));
-        for (PillView p : new PillView[]{inputs, wifiPill, settings}) {
+        for (View p : new View[]{inputs, wifiPill, settings}) {
             right.addView(p, llp(-2, dp(30), dp(10), 0, 0, 0));
             pills.add(p);
         }
@@ -317,69 +379,50 @@ public class MainActivity extends Activity {
         return header;
     }
 
-    private PillView pill(String labelText, int iconResId) {
-        PillView p = new PillView(this);
+    private GradientDrawable pillBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(15));
+        bg.setColor(0x66000000);
+        bg.setStroke(dp(1), 0x33FFFFFF);
+        return bg;
+    }
+
+    /** A round icon button; it widens to show its label while focused. */
+    private View pill(String label, int iconRes) {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.HORIZONTAL);
+        p.setGravity(Gravity.CENTER);
+        p.setPadding(dp(6), 0, dp(6), 0);
+        p.setFocusable(true);
         p.setId(View.generateViewId());
-        p.setPadding(dp(14), 0, dp(14), 0);
 
-        p.bg.setCornerRadius(dp(15));
-        p.bg.setStroke(dp(1), 0x33FFFFFF);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(0xE6FFFFFF);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        p.addView(icon, new LinearLayout.LayoutParams(dp(18), dp(18)));
 
-        p.icon.setImageResource(iconResId);
-        int iconSize = dp(14);
-        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(iconSize, iconSize);
-        ip.setMargins(0, 0, dp(7), 0);
-        ip.gravity = Gravity.CENTER_VERTICAL;
-        p.icon.setLayoutParams(ip);
-        p.icon.setColorFilter(0xE6FFFFFF, PorterDuff.Mode.SRC_IN);
+        TextView text = text(11, "sans-serif-medium", 0xE6FFFFFF);
+        text.setText(label);
+        text.setSingleLine(true);
+        text.setPadding(dp(8), 0, dp(6), 0);
+        text.setVisibility(View.GONE);
+        p.addView(text);
 
-        p.label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        p.label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        p.label.setTextColor(0xE6FFFFFF);
-        p.label.setText(labelText);
+        GradientDrawable bg = pillBackground();
+        p.setBackground(bg);
 
         p.setOnFocusChangeListener((v, has) -> {
-            int fg = has ? 0xFF111111 : 0xE6FFFFFF;
-            p.bg.setColor(has ? 0xF2FFFFFF : 0x66000000);
-            p.label.setTextColor(fg);
-            p.icon.setColorFilter(fg, PorterDuff.Mode.SRC_IN);
+            bg.setColor(has ? 0xF2FFFFFF : 0x66000000);
+            text.setTextColor(has ? 0xFF111111 : 0xE6FFFFFF);
+            text.setVisibility(has ? View.VISIBLE : View.GONE);
+            icon.setColorFilter(has ? 0xFF111111 : 0xE6FFFFFF);
             v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f)
                     .setInterpolator(new OvershootInterpolator(2f)).setDuration(220).start();
             if (has) { lastFocusedId = v.getId(); scroll.smoothScrollTo(0, 0); fadeGlow(1f); }
         });
+        p.setTag(text);
         return p;
-    }
-
-    static final class PillView extends LinearLayout {
-        final ImageView icon;
-        final TextView label;
-        final GradientDrawable bg;
-
-        PillView(Context context) {
-            super(context);
-            setOrientation(HORIZONTAL);
-            setGravity(Gravity.CENTER);
-            setFocusable(true);
-            setClipChildren(false);
-            setClipToPadding(false);
-
-            bg = new GradientDrawable();
-            bg.setColor(0x66000000);
-            setBackground(bg);
-
-            icon = new ImageView(context);
-            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            addView(icon);
-
-            label = new TextView(context);
-            label.setSingleLine(true);
-            label.setGravity(Gravity.CENTER);
-            addView(label);
-        }
-
-        void setText(String text) {
-            label.setText(text);
-        }
     }
 
     // ---------------------------------------------------------------- apps
@@ -415,12 +458,21 @@ public class MainActivity extends Activity {
         dockCards.clear();
         gridCards.clear();
 
-        for (int i = 0; i < dock.size(); i++) {
+        int dcount = dock.size();
+        int dW = tileWidth();
+        for (int i = 0; i < dcount; i++) {
             View tile = tile(dock.get(i), true);
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1f);
-            p.setMargins(i == 0 ? 0 : dp(10), 0, i == dock.size() - 1 ? 0 : dp(10), 0);
+            LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) tile.getLayoutParams();
+            if (p == null) {
+                p = new LinearLayout.LayoutParams(dW, -2);
+            } else {
+                p.width = dW;
+                p.height = -2;
+            }
+            p.setMargins(i == 0 ? 0 : dp(10), 0, i == dcount - 1 ? 0 : dp(10), 0);
             dockRow.addView(tile, p);
         }
+        dockRow.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout row = null;
         for (int i = 0; i < rest.size(); i++) {
@@ -441,7 +493,6 @@ public class MainActivity extends Activity {
             p.setMargins(dp(10), 0, i == cols - 1 ? 0 : dp(10), 0);
             row.addView(new View(this), p);
         }
-        appsLabel.setVisibility(rest.isEmpty() ? View.GONE : View.VISIBLE);
         wireFocus();
 
         if (!dock.isEmpty()) { title.setText(dock.get(0).label); setGlow(dock.get(0).color); }
@@ -456,6 +507,9 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setClipChildren(false);
         box.setClipToPadding(false);
+        if (inDock) {
+            box.setLayoutParams(new LinearLayout.LayoutParams(tileWidth(), -2));
+        }
 
         FrameLayout card = new AspectFrame(this);
         card.setId(View.generateViewId());
@@ -508,7 +562,7 @@ public class MainActivity extends Activity {
                 .setComponent(app.component)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)));
         card.setOnFocusChangeListener((v, has) -> {
-            float s = has ? (inDock ? 1.12f : 1.1f) : 1f;
+            float s = has ? (inDock ? 1.14f : 1.1f) : 1f;
             v.animate().scaleX(s).scaleY(s).translationZ(has ? dp(14) : 0)
                     .setInterpolator(has ? new OvershootInterpolator(1.8f) : new DecelerateInterpolator())
                     .setDuration(has ? 320 : 200).start();
@@ -625,7 +679,7 @@ public class MainActivity extends Activity {
         pw.setElevation(dp(16));
         pw.setOnDismissListener(() -> { inputsPopup = null; anchor.requestFocus(); });
         inputsPopup = pw;
-        pw.showAsDropDown(anchor, 0, dp(8), Gravity.START);
+        pw.showAsDropDown(anchor, 0, dp(8), Gravity.END);
         rows.get(0).requestFocus();
     }
 
@@ -659,11 +713,12 @@ public class MainActivity extends Activity {
     private void updateClock() {
         Calendar now = Calendar.getInstance();
         int h = now.get(Calendar.HOUR_OF_DAY);
-        greeting.setText(h < 5 ? "GOOD NIGHT" : h < 12 ? "GOOD MORNING" : h < 17 ? "GOOD AFTERNOON" : "GOOD EVENING");
         boolean is24 = android.text.format.DateFormat.is24HourFormat(this);
-        clock.setText(new SimpleDateFormat(is24 ? "H:mm" : "h:mm", Locale.getDefault()).format(now.getTime()));
-        ampm.setText(is24 ? "" : (h < 12 ? "AM" : "PM"));
-        date.setText(new SimpleDateFormat("EEEE  d MMMM", Locale.getDefault()).format(now.getTime()).toUpperCase(Locale.getDefault()));
+        String t = new SimpleDateFormat(is24 ? "H:mm" : "h:mm", Locale.getDefault()).format(now.getTime());
+        clock.setText(is24 ? t : t + (h < 12 ? " AM" : " PM"));
+        date.setText(new SimpleDateFormat("EEEE  d MMMM", Locale.getDefault()).format(now.getTime()).toUpperCase(Locale.getDefault())
+                + "  \u00B7  " + locationName.toUpperCase(Locale.getDefault()));
+        updatePrayer();
     }
 
     private void updateWifi() {
@@ -676,8 +731,155 @@ public class MainActivity extends Activity {
                 if (wm.getConnectionInfo().getNetworkId() == -1) name = "Offline";
             }
         } catch (SecurityException ignored) { }
-        wifiPill.setText(name);
-        wifiPill.icon.setColorFilter(wifiPill.label.getCurrentTextColor(), PorterDuff.Mode.SRC_IN);
+        if (wifiPill != null && wifiPill.getTag() instanceof TextView) {
+            ((TextView) wifiPill.getTag()).setText(name);
+        }
+    }
+
+    // ---------------------------------------------------------------- weather
+
+    private void scheduleWeather(long delay) {
+        handler.removeCallbacks(refreshWeather);
+        handler.postDelayed(refreshWeather, Math.max(1000, delay));
+    }
+
+    /** Current temperature and sky from Open-Meteo (no key), fetched off the main thread. */
+    private void fetchWeather() {
+        handler.removeCallbacks(refreshWeather);
+        if (weatherBusy) return;
+        weatherBusy = true;
+        new Thread(() -> {
+            String text = null;
+            HttpURLConnection c = null;
+            try {
+                URL u = new URL("https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lng
+                        + "&current=temperature_2m,weather_code&timezone=auto");
+                c = (HttpURLConnection) u.openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                if (c.getResponseCode() == 200) {
+                    StringBuilder sb = new StringBuilder();
+                    try (java.io.BufferedReader r = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(c.getInputStream()))) {
+                        String line;
+                        while ((line = r.readLine()) != null) sb.append(line);
+                    }
+                    JSONObject cur = new JSONObject(sb.toString()).getJSONObject("current");
+                    text = Math.round(cur.getDouble("temperature_2m")) + "\u00B0  "
+                            + weatherLabel(cur.getInt("weather_code"));
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (c != null) c.disconnect();
+            }
+            String result = text;
+            runOnUiThread(() -> {
+                weatherBusy = false;
+                if (isDestroyed()) return;
+                if (result != null) {
+                    weather.setText(result.trim());
+                    weatherAt = SystemClock.elapsedRealtime();
+                    scheduleWeather(WEATHER_INTERVAL_MS);
+                } else {
+                    scheduleWeather(5 * 60 * 1000); // offline: try again in 5 minutes
+                }
+            });
+        }).start();
+    }
+
+    private static String weatherLabel(int code) {
+        if (code == 0) return "Cerah";
+        if (code <= 2) return "Cerah berawan";
+        if (code == 3) return "Berawan";
+        if (code == 45 || code == 48) return "Berkabut";
+        if (code >= 51 && code <= 57) return "Gerimis";
+        if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return "Hujan";
+        if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "Salju";
+        if (code >= 95) return "Badai petir";
+        return "";
+    }
+
+    // ---------------------------------------------------------------- prayer times
+
+    private void updatePrayer() {
+        Calendar now = Calendar.getInstance();
+        double tz = TimeZone.getDefault().getOffset(now.getTimeInMillis()) / 3600000.0;
+        int[] t = prayerMinutes(now, tz);
+        int cur = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
+        int next = 0; // after Isya the next one is tomorrow's Subuh
+        for (int i = 0; i < 5; i++) if (t[i] > cur) { next = i; break; }
+        for (int i = 0; i < 5; i++) {
+            prayerTime[i].setText(t[i] < 0 ? "--:--"
+                    : String.format(Locale.US, "%02d:%02d", t[i] / 60 % 24, t[i] % 60));
+            boolean on = i == next;
+            prayerName[i].setTextColor(on ? Color.WHITE : 0x99FFFFFF);
+            prayerTime[i].setTextColor(on ? Color.WHITE : 0xB3FFFFFF);
+            prayerTime[i].setTypeface(Typeface.create("sans-serif-medium", on ? Typeface.BOLD : Typeface.NORMAL));
+        }
+    }
+
+    /**
+     * Subuh, Dzuhur, Ashar, Maghrib, Isya as minutes after midnight (-1 if the sun never reaches
+     * the angle). Standard solar-position method; Ashar uses the Shafi'i shadow factor.
+     */
+    private int[] prayerMinutes(Calendar day, double tz) {
+        double jd = julian(day.get(Calendar.YEAR), day.get(Calendar.MONTH) + 1, day.get(Calendar.DAY_OF_MONTH))
+                - lng / 360;
+        double[] h = {
+                midDay(jd, 5 / 24.0) - angleTime(jd, fajrAngle, 5 / 24.0),
+                midDay(jd, 12 / 24.0),
+                midDay(jd, 13 / 24.0) + asrTime(jd, 1, 13 / 24.0),
+                midDay(jd, 18 / 24.0) + angleTime(jd, 0.833, 18 / 24.0),
+                midDay(jd, 18 / 24.0) + angleTime(jd, ishaAngle, 18 / 24.0)};
+        int[] m = new int[5];
+        for (int i = 0; i < 5; i++) {
+            double v = h[i] + tz - lng / 15;
+            m[i] = Double.isNaN(v) ? -1 : (int) Math.round(fix(v, 24) * 60) + ihtiyat;
+        }
+        return m;
+    }
+
+    private static double fix(double a, double b) {
+        a = a - b * Math.floor(a / b);
+        return a < 0 ? a + b : a;
+    }
+
+    private static double julian(int y, int m, int d) {
+        if (m <= 2) { y -= 1; m += 12; }
+        double a = Math.floor(y / 100.0);
+        double b = 2 - a + Math.floor(a / 4);
+        return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + b - 1524.5;
+    }
+
+    /** {declination in degrees, equation of time in hours} at a Julian date. */
+    private static double[] sunPosition(double jd) {
+        double dd = jd - 2451545.0;
+        double g = fix(357.529 + 0.98560028 * dd, 360);
+        double q = fix(280.459 + 0.98564736 * dd, 360);
+        double l = fix(q + 1.915 * Math.sin(Math.toRadians(g)) + 0.020 * Math.sin(Math.toRadians(2 * g)), 360);
+        double e = 23.439 - 0.00000036 * dd;
+        double ra = Math.toDegrees(Math.atan2(Math.cos(Math.toRadians(e)) * Math.sin(Math.toRadians(l)),
+                Math.cos(Math.toRadians(l)))) / 15;
+        double decl = Math.toDegrees(Math.asin(Math.sin(Math.toRadians(e)) * Math.sin(Math.toRadians(l))));
+        return new double[]{decl, q / 15 - fix(ra, 24)};
+    }
+
+    private static double midDay(double jd, double t) {
+        return fix(12 - sunPosition(jd + t)[1], 24);
+    }
+
+    /** Hours between solar noon and the sun reaching {@code angle} degrees below the horizon. */
+    private double angleTime(double jd, double angle, double t) {
+        double decl = Math.toRadians(sunPosition(jd + t)[0]);
+        double la = Math.toRadians(lat);
+        double x = (-Math.sin(Math.toRadians(angle)) - Math.sin(decl) * Math.sin(la)) / (Math.cos(decl) * Math.cos(la));
+        return Math.toDegrees(Math.acos(x)) / 15;
+    }
+
+    private double asrTime(double jd, double factor, double t) {
+        double decl = sunPosition(jd + t)[0];
+        double angle = -Math.toDegrees(Math.atan(1 / (factor + Math.tan(Math.toRadians(Math.abs(lat - decl))))));
+        return angleTime(jd, angle, t);
     }
 
     // ---------------------------------------------------------------- glow
@@ -843,6 +1045,12 @@ public class MainActivity extends Activity {
         t.setTypeface(Typeface.create(family, Typeface.NORMAL));
         t.setTextColor(color);
         return t;
+    }
+
+    /** Dock and grid tiles share one width, so the dock lines up with the grid columns. */
+    private int tileWidth() {
+        int w = getResources().getDisplayMetrics().widthPixels;
+        return (w - 2 * dp(68) - (cols - 1) * dp(20)) / cols;
     }
 
     private int dp(float v) {
