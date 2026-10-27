@@ -861,7 +861,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateWifi() {
-        String name = null;
+        String name = "Wi-Fi";
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
             if (wm != null && wm.getConnectionInfo() != null) {
@@ -869,29 +869,16 @@ public class MainActivity extends Activity {
                 String s = info.getSSID();
                 if (s != null) {
                     s = s.replace("\"", "");
-                    if (!s.equals("<unknown ssid>") && !s.equals("0x") && !s.isEmpty()) {
+                    if (!s.equals("<unknown ssid>") && !s.isEmpty()) {
                         name = s;
-                    }
-                }
-                if (name == null) {
-                    // try network info
-                    android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-                    if (cm != null) {
-                        android.net.Network net = cm.getActiveNetwork();
-                        if (net != null) {
-                            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(net);
-                            if (nc != null && nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) {
-                                if (s != null) {
-                                    s = s.replace("\"", "");
-                                    if (!s.equals("<unknown ssid>")) name = s.isEmpty() ? "Wi-Fi" : s;
-                                }
-                            }
+                        if (wifiPill != null && wifiPill.getTag() instanceof TextView) {
+                            ((TextView) wifiPill.getTag()).setText(name);
                         }
+                        return;
                     }
                 }
             }
-        } catch (Exception ignored) { }
-        if (name == null) name = "Wi-Fi";
+        } catch (SecurityException ignored) { }
         if (wifiPill != null && wifiPill.getTag() instanceof TextView) {
             ((TextView) wifiPill.getTag()).setText(name);
         }
