@@ -6,8 +6,10 @@
 <resources>
     <!-- Dock apps, left to right. Apps that aren't installed are skipped. -->
     <string-array name="dock_apps">
+        <item>com.cinejoy.app.cinejoymovieee</item>
         <item>com.google.android.youtube.tv</item>
         <item>com.google.android.youtube.tvmusic</item>
+        <item>com.idlix.tv.debug</item>
         <item>com.live_streaming_tv.online_tv</item>
         <item>com.fornax.vortex</item>
         <item>com.tcl.livetv</item>

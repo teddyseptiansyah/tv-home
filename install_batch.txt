@@ -1,0 +1,9 @@
+pm install -r /data/local/tmp/tvhome.apk
+rm -f /data/local/tmp/tvhome.apk
+pm grant com.mihir.tvhome android.permission.ACCESS_FINE_LOCATION
+cmd package set-home-activity --user 0 com.mihir.tvhome/.MainActivity
+pm disable-user --user 0 com.google.android.apps.tv.launcherx
+pm disable-user --user 0 com.google.android.tungsten.setupwraith
+cmd package set-home-activity --user 0 com.mihir.tvhome/.MainActivity
+am force-stop com.android.tv.settings
+input keyevent KEYCODE_HOME

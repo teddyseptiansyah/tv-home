@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
@@ -447,9 +448,54 @@ public class MainActivity extends Activity {
             a.color = sampleColor(a.pkg, a.art);
             byPkg.put(a.pkg, a);
         }
+        // Fallback: also query CATEGORY_LAUNCHER
+        Intent q2 = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        for (ResolveInfo ri : pm.queryIntentActivities(q2, 0)) {
+            ActivityInfo ai = ri.activityInfo;
+            if (hidden.contains(ai.packageName) || byPkg.containsKey(ai.packageName)) continue;
+            App a = new App();
+            a.pkg = ai.packageName;
+            a.label = String.valueOf(ri.loadLabel(pm));
+            a.component = new ComponentName(ai.packageName, ai.name);
+            Drawable banner = ai.loadBanner(pm);
+            if (banner == null) banner = ai.applicationInfo.loadBanner(pm);
+            a.isBanner = banner != null;
+            a.art = banner != null ? banner : ri.loadIcon(pm);
+            a.color = sampleColor(a.pkg, a.art);
+            byPkg.put(a.pkg, a);
+        }
 
         List<App> dock = new ArrayList<>();
-        for (String p : dockApps) if (byPkg.containsKey(p)) dock.add(byPkg.remove(p));
+        for (String p : dockApps) {
+            if (byPkg.containsKey(p)) {
+                dock.add(byPkg.remove(p));
+            } else {
+                // Try to construct entry directly for dock apps
+                try {
+                    ApplicationInfo ai = pm.getApplicationInfo(p, 0);
+                    Intent li = pm.getLeanbackLaunchIntentForPackage(p);
+                    if (li == null) li = pm.getLaunchIntentForPackage(p);
+                    if (li != null && li.getComponent() != null) {
+                        App a = new App();
+                        a.pkg = p;
+                        a.label = String.valueOf(pm.getApplicationLabel(ai));
+                        a.component = li.getComponent();
+                        Drawable banner = ai.loadBanner(pm);
+                        if (banner == null) {
+                            try {
+                                ActivityInfo act = pm.getActivityInfo(li.getComponent(), 0);
+                                banner = act.loadBanner(pm);
+                            } catch (Exception ignored) {}
+                        }
+                        a.isBanner = banner != null;
+                        a.art = banner != null ? banner : ai.loadIcon(pm);
+                        a.color = sampleColor(p, a.art);
+                        dock.add(a);
+                        continue;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
         List<App> rest = new ArrayList<>(byPkg.values());
         Collections.sort(rest, (x, y) -> x.label.compareToIgnoreCase(y.label));
 
@@ -1077,14 +1123,57 @@ public class MainActivity extends Activity {
         return Color.rgb((int) (Color.red(c) * f), (int) (Color.green(c) * f), (int) (Color.blue(c) * f));
     }
 
+    private boolean handleShortcut(KeyEvent e) {
+        if (e == null) return false;
+        int k = e.getKeyCode();
+        // Menu key opens the Inputs dropdown
+        if (k == KeyEvent.KEYCODE_MENU) {
+            if (!pills.isEmpty()) { showInputs(pills.get(0)); return true; }
+        }
+        // Settings shortcut button
+        if (k == KeyEvent.KEYCODE_SETTINGS) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return true;
+            } catch (Exception ignored) {}
+        }
+        // Channel / Guide / TV Input shortcuts -> open Inputs/source picker
+        if (k == KeyEvent.KEYCODE_GUIDE || k == KeyEvent.KEYCODE_TV_INPUT
+                || k == KeyEvent.KEYCODE_TV || k == KeyEvent.KEYCODE_CHANNEL_UP
+                || k == KeyEvent.KEYCODE_CHANNEL_DOWN) {
+            if (!pills.isEmpty()) { showInputs(pills.get(0)); return true; }
+        }
+        // Some TCL remotes use INFO or PROG keys for sources/settings
+        if (k == KeyEvent.KEYCODE_INFO || k == KeyEvent.KEYCODE_PROG_RED
+                || k == KeyEvent.KEYCODE_PROG_GREEN || k == KeyEvent.KEYCODE_PROG_YELLOW
+                || k == KeyEvent.KEYCODE_PROG_BLUE) {
+            if (!pills.isEmpty()) { showInputs(pills.get(0)); return true; }
+        }
+        // Source/Input variants
+        if (k == KeyEvent.KEYCODE_WINDOW) {
+            if (!pills.isEmpty()) { showInputs(pills.get(0)); return true; }
+        }
+        return false;
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
-        // Menu key on the remote opens the Inputs dropdown.
-        if (e.getKeyCode() == KeyEvent.KEYCODE_MENU && e.getAction() == KeyEvent.ACTION_UP && !pills.isEmpty()) {
-            showInputs(pills.get(0));
-            return true;
+        if (e != null && (e.getAction() == KeyEvent.ACTION_DOWN || e.getAction() == KeyEvent.ACTION_UP)) {
+            if (handleShortcut(e)) return true;
         }
         return super.dispatchKeyEvent(e);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (handleShortcut(event)) return true;
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (handleShortcut(event)) return true;
+        return super.onKeyUp(keyCode, event);
     }
 
     /** 16:9 container. */
