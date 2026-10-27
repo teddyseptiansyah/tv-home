@@ -19,13 +19,26 @@ rm -rf "$B" && mkdir -p "$B/gen" "$B/classes" "$B/dex"
   -A assets --min-sdk-version 30 --target-sdk-version 30 "$B/res.zip"
 javac -nowarn -Xlint:-options --release 11 -classpath "$JAR" -d "$B/classes" \
   $(find src "$B/gen" -name '*.java')
-"$BT/d8" --min-api 30 --lib "$JAR" --output "$B/dex" $(find "$B/classes" -name '*.class')
+D8="$BT/d8"
+[ -e "$D8" ] || D8="$BT/d8.bat"
+[ -e "$D8" ] || D8="$BT/d8.exe"
+ZIPALIGN="$BT/zipalign"
+[ -e "$ZIPALIGN" ] || ZIPALIGN="$BT/zipalign.bat"
+[ -e "$ZIPALIGN" ] || ZIPALIGN="$BT/zipalign.exe"
+APKSIGNER="$BT/apksigner"
+[ -e "$APKSIGNER" ] || APKSIGNER="$BT/apksigner.bat"
+[ -e "$APKSIGNER" ] || APKSIGNER="$BT/apksigner.exe"
+"$D8" --min-api 30 --lib "$JAR" --output "$B/dex" $(find "$B/classes" -name '*.class')
 cp "$B/base.apk" "$B/unsigned.apk"
-(cd "$B/dex" && zip -q -u ../unsigned.apk classes.dex)
-"$BT/zipalign" -f 4 "$B/unsigned.apk" "$B/aligned.apk"
+if command -v zip >/dev/null 2>&1; then
+  (cd "$B/dex" && zip -q -u ../unsigned.apk classes.dex)
+else
+  python -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'a'); z.write(sys.argv[2],'classes.dex'); z.close()" "$B/unsigned.apk" "$B/dex/classes.dex"
+fi
+"$ZIPALIGN" -f 4 "$B/unsigned.apk" "$B/aligned.apk"
 [ -f debug.keystore ] || keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
   -alias tvhome -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=tvhome" >/dev/null 2>&1
-"$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android --out "$B/tvhome.apk" "$B/aligned.apk"
+"$APKSIGNER" sign --ks debug.keystore --ks-pass pass:android --out "$B/tvhome.apk" "$B/aligned.apk"
 echo "built $B/tvhome.apk ($(wc -c < "$B/tvhome.apk") bytes)"
 [ "${1:-}" = "--build" ] && exit 0
 

@@ -112,6 +112,9 @@ public class MainActivity extends Activity {
     private TextView weather;
     private final TextView[] prayerName = new TextView[5];
     private final TextView[] prayerTime = new TextView[5];
+    private TextView prayerCountdown;
+    private TextView locationView;
+    private LinearLayout calendarCard;
     private long weatherAt;
     private boolean weatherBusy;
     static final long WEATHER_INTERVAL_MS = 30 * 60 * 1000;
@@ -342,10 +345,48 @@ public class MainActivity extends Activity {
         left.addView(prayers, llp(-2, -2, 0, dp(12), 0, 0));
         header.addView(left, new FrameLayout.LayoutParams(dp(440), -2, Gravity.START | Gravity.TOP));
 
-        // Top-right: a small clock pill, then icon buttons (the label shows while one is focused).
+        // Top-right: location + prayer countdown, clock, weather, icon buttons
+        LinearLayout rightCol = new LinearLayout(this);
+        rightCol.setOrientation(LinearLayout.VERTICAL);
+        rightCol.setGravity(Gravity.END);
+        rightCol.setClipChildren(false);
+
+        LinearLayout locRow = new LinearLayout(this);
+        locRow.setGravity(Gravity.CENTER_VERTICAL);
+        locationView = text(10, "sans-serif-medium", 0xCCFFFFFF);
+        locationView.setLetterSpacing(0.18f);
+        locationView.setText(locationName.toUpperCase(Locale.getDefault()));
+        locRow.addView(locationView);
+        prayerCountdown = text(10, "sans-serif-medium", 0xCCFFFFFF);
+        prayerCountdown.setLetterSpacing(0.12f);
+        prayerCountdown.setPadding(dp(10), 0, 0, 0);
+        locRow.addView(prayerCountdown);
+        rightCol.addView(locRow);
+
         LinearLayout right = new LinearLayout(this);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.setClipChildren(false);
+
+        // Calendar card
+        calendarCard = new LinearLayout(this);
+        calendarCard.setOrientation(LinearLayout.VERTICAL);
+        calendarCard.setGravity(Gravity.CENTER);
+        calendarCard.setPadding(dp(10), dp(6), dp(10), dp(6));
+        GradientDrawable calBg = new GradientDrawable();
+        calBg.setCornerRadius(dp(12));
+        calBg.setColor(0x66000000);
+        calBg.setStroke(dp(1), 0x33FFFFFF);
+        calendarCard.setBackground(calBg);
+        TextView calDay = text(16, "sans-serif-medium", Color.WHITE);
+        calDay.setText(String.valueOf(Calendar.getInstance().get(Calendar.DAY_OF_MONTH)));
+        TextView calMon = text(8, "sans-serif-medium", 0xB3FFFFFF);
+        calMon.setLetterSpacing(0.18f);
+        calMon.setText(new SimpleDateFormat("MMM", Locale.getDefault()).format(Calendar.getInstance().getTime()).toUpperCase(Locale.getDefault()));
+        TextView calHijri = text(7, "sans-serif-medium", 0x99FFFFFF);
+        calendarCard.addView(calDay);
+        calendarCard.addView(calMon);
+        calendarCard.addView(calHijri);
+        right.addView(calendarCard, llp(-2, dp(46), 0, dp(8), dp(10), 0));
 
         LinearLayout weatherPill = new LinearLayout(this);
         weatherPill.setGravity(Gravity.CENTER);
@@ -355,7 +396,7 @@ public class MainActivity extends Activity {
         weather.setIncludeFontPadding(false);
         weather.setText("--\u00B0");
         weatherPill.addView(weather);
-        right.addView(weatherPill, llp(-2, dp(30), 0, 0, 0, 0));
+        right.addView(weatherPill, llp(-2, dp(30), 0, dp(8), 0, 0));
 
         LinearLayout timePill = new LinearLayout(this);
         timePill.setGravity(Gravity.CENTER);
@@ -364,7 +405,7 @@ public class MainActivity extends Activity {
         clock = text(12, "sans-serif-medium", Color.WHITE);
         clock.setIncludeFontPadding(false);
         timePill.addView(clock);
-        right.addView(timePill, llp(-2, dp(30), dp(10), 0, 0, 0));
+        right.addView(timePill, llp(-2, dp(30), dp(10), dp(8), 0, 0));
 
         View inputs = pill("Inputs", R.drawable.ic_inputs);
         inputs.setOnClickListener(v -> showInputs(v));
@@ -373,10 +414,11 @@ public class MainActivity extends Activity {
         View settings = pill("Settings", R.drawable.ic_settings);
         settings.setOnClickListener(v -> launch(new Intent(Settings.ACTION_SETTINGS)));
         for (View p : new View[]{inputs, wifiPill, settings}) {
-            right.addView(p, llp(-2, dp(30), dp(10), 0, 0, 0));
+            right.addView(p, llp(-2, dp(30), dp(10), dp(8), 0, 0));
             pills.add(p);
         }
-        header.addView(right, new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.TOP));
+        rightCol.addView(right);
+        header.addView(rightCol, new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.TOP));
         return header;
     }
 
@@ -681,22 +723,32 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------- inputs
 
     private void showInputs(View anchor) {
+        if (inputsPopup != null) {
+            inputsPopup.dismiss();
+            inputsPopup = null;
+        }
+
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(dp(8), dp(8), dp(8), dp(8));
+        list.setPadding(dp(10), dp(10), dp(10), dp(10));
+        list.setClipChildren(false);
+        list.setClipToPadding(false);
+
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(16));
-        bg.setColor(0xF02A2A2E);
-        bg.setStroke(dp(1), 0x26FFFFFF);
+        bg.setCornerRadius(dp(28));
+        bg.setColor(0xCC1C1C1E);
+        bg.setStroke(dp(1), 0x40FFFFFF);
         list.setBackground(bg);
 
-        PopupWindow pw = new PopupWindow(list, dp(200), -2, true);
+        PopupWindow pw = new PopupWindow(list, dp(248), -2, true);
         List<TextView> rows = new ArrayList<>();
 
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         List<TvInputInfo> inputs = new ArrayList<>();
-        if (tim != null) for (TvInputInfo t : tim.getTvInputList()) {
-            if (t.isPassthroughInput() && !t.isHidden(this)) inputs.add(t);
+        if (tim != null) {
+            for (TvInputInfo t : tim.getTvInputList()) {
+                if (t.isPassthroughInput() && !t.isHidden(this)) inputs.add(t);
+            }
         }
         Collections.sort(inputs, (x, y) -> inputLabel(x).compareToIgnoreCase(inputLabel(y)));
         for (TvInputInfo t : inputs) {
@@ -711,22 +763,33 @@ public class MainActivity extends Activity {
 
         if (rows.isEmpty()) rows.add(inputRow("Settings", () -> launch(new Intent(Settings.ACTION_SETTINGS))));
         for (TextView r : rows) {
-            r.setOnClickListener(v -> { pw.dismiss(); ((Runnable) v.getTag()).run(); });
-            list.addView(r, new LinearLayout.LayoutParams(-1, dp(36)));
+            r.setOnClickListener(v -> { pw.dismiss(); Object tag = v.getTag(); if (tag instanceof Runnable) ((Runnable) tag).run(); });
+            LinearLayout.LayoutParams lpRow = new LinearLayout.LayoutParams(-1, dp(44));
+            lpRow.setMargins(0, dp(2), 0, dp(2));
+            list.addView(r, lpRow);
         }
         for (int i = 0; i < rows.size(); i++) {
             TextView r = rows.get(i);
-            r.setNextFocusUpId(rows.get(Math.max(0, i - 1)).getId());
-            r.setNextFocusDownId(rows.get(Math.min(rows.size() - 1, i + 1)).getId());
+            r.setNextFocusUpId(i == 0 ? rows.get(rows.size() - 1).getId() : rows.get(i - 1).getId());
+            r.setNextFocusDownId(i == rows.size() - 1 ? rows.get(0).getId() : rows.get(i + 1).getId());
             r.setNextFocusLeftId(r.getId());
             r.setNextFocusRightId(r.getId());
         }
         pw.setOutsideTouchable(true);
-        pw.setElevation(dp(16));
-        pw.setOnDismissListener(() -> { inputsPopup = null; anchor.requestFocus(); });
+        pw.setFocusable(true);
+        pw.setElevation(dp(28));
+        pw.setClippingEnabled(false);
+        pw.setOnDismissListener(() -> {
+            inputsPopup = null;
+            if (anchor != null) anchor.requestFocus();
+        });
         inputsPopup = pw;
-        pw.showAsDropDown(anchor, 0, dp(8), Gravity.END);
-        rows.get(0).requestFocus();
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        int x = loc[0] + anchor.getWidth() - dp(248);
+        int y = loc[1] + anchor.getHeight() + dp(10);
+        pw.showAtLocation(getWindow().getDecorView(), Gravity.NO_GRAVITY, x, y);
+        if (!rows.isEmpty()) rows.get(0).requestFocus();
     }
 
     private String inputLabel(TvInputInfo t) {
@@ -736,20 +799,29 @@ public class MainActivity extends Activity {
     }
 
     private TextView inputRow(String label, Runnable action) {
-        TextView r = text(13, "sans-serif", Color.WHITE);
+        TextView r = text(14, "sans-serif-medium", 0xF2FFFFFF);
         r.setText(label);
         r.setTag(action);
         r.setId(View.generateViewId());
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(dp(14), 0, dp(14), 0);
+        r.setPadding(dp(18), 0, dp(18), 0);
         r.setFocusable(true);
+        r.setSingleLine(true);
+        r.setEllipsize(android.text.TextUtils.TruncateAt.END);
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(10));
+        bg.setCornerRadius(dp(22));
         bg.setColor(Color.TRANSPARENT);
         r.setBackground(bg);
         r.setOnFocusChangeListener((v, has) -> {
-            bg.setColor(has ? 0xF2FFFFFF : Color.TRANSPARENT);
-            r.setTextColor(has ? 0xFF111111 : Color.WHITE);
+            if (has) {
+                bg.setColor(0xE6FFFFFF);
+                r.setTextColor(0xFF000000);
+                v.animate().scaleX(1.02f).scaleY(1.02f).setDuration(140).start();
+            } else {
+                bg.setColor(Color.TRANSPARENT);
+                r.setTextColor(0xF2FFFFFF);
+                v.animate().scaleX(1f).scaleY(1f).setDuration(140).start();
+            }
         });
         return r;
     }
@@ -764,19 +836,62 @@ public class MainActivity extends Activity {
         clock.setText(is24 ? t : t + (h < 12 ? " AM" : " PM"));
         date.setText(new SimpleDateFormat("EEEE  d MMMM", Locale.getDefault()).format(now.getTime()).toUpperCase(Locale.getDefault())
                 + "  \u00B7  " + locationName.toUpperCase(Locale.getDefault()));
+        if (locationView != null) {
+            locationView.setText(locationName.toUpperCase(Locale.getDefault()));
+        }
         updatePrayer();
     }
 
+    private void updateCalendarCard() {
+        if (calendarCard == null) return;
+        Calendar now = Calendar.getInstance();
+        TextView day = null;
+        TextView month = null;
+        TextView hijri = null;
+        // try to find children
+        if (calendarCard.getChildCount() >= 3) {
+            if (calendarCard.getChildAt(0) instanceof TextView) day = (TextView) calendarCard.getChildAt(0);
+            if (calendarCard.getChildAt(1) instanceof TextView) month = (TextView) calendarCard.getChildAt(1);
+            if (calendarCard.getChildAt(2) instanceof TextView) hijri = (TextView) calendarCard.getChildAt(2);
+        }
+        if (day != null) day.setText(String.valueOf(now.get(Calendar.DAY_OF_MONTH)));
+        if (month != null) month.setText(new SimpleDateFormat("MMM", Locale.getDefault()).format(now.getTime()).toUpperCase(Locale.getDefault()));
+        // simple approx hijri not available offline easily; show placeholder or leave
+        if (hijri != null) hijri.setText("");
+    }
+
     private void updateWifi() {
-        String name = "Wi-Fi";
+        String name = null;
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
             if (wm != null && wm.getConnectionInfo() != null) {
-                String s = wm.getConnectionInfo().getSSID();
-                if (s != null && !s.contains("unknown ssid")) name = s.replace("\"", "");
-                if (wm.getConnectionInfo().getNetworkId() == -1) name = "Offline";
+                android.net.wifi.WifiInfo info = wm.getConnectionInfo();
+                String s = info.getSSID();
+                if (s != null) {
+                    s = s.replace("\"", "");
+                    if (!s.equals("<unknown ssid>") && !s.equals("0x") && !s.isEmpty()) {
+                        name = s;
+                    }
+                }
+                if (name == null) {
+                    // try network info
+                    android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                    if (cm != null) {
+                        android.net.Network net = cm.getActiveNetwork();
+                        if (net != null) {
+                            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(net);
+                            if (nc != null && nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) {
+                                if (s != null) {
+                                    s = s.replace("\"", "");
+                                    if (!s.equals("<unknown ssid>")) name = s.isEmpty() ? "Wi-Fi" : s;
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        } catch (SecurityException ignored) { }
+        } catch (Exception ignored) { }
+        if (name == null) name = "Wi-Fi";
         if (wifiPill != null && wifiPill.getTag() instanceof TextView) {
             ((TextView) wifiPill.getTag()).setText(name);
         }
@@ -852,16 +967,51 @@ public class MainActivity extends Activity {
         double tz = TimeZone.getDefault().getOffset(now.getTimeInMillis()) / 3600000.0;
         int[] t = prayerMinutes(now, tz);
         int cur = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
-        int next = 0; // after Isya the next one is tomorrow's Subuh
-        for (int i = 0; i < 5; i++) if (t[i] > cur) { next = i; break; }
+        int next = -1;
+        for (int i = 0; i < 5; i++) {
+            if (t[i] >= cur) { next = i; break; }
+        }
+        if (next == -1) {
+            // after Isya, next is tomorrow's Subuh
+            next = 0;
+            // compute tomorrow Subuh offset roughly? keep simple: show Subuh next day
+            int subuh = t[0];
+            if (subuh < 0) {
+                if (prayerCountdown != null) prayerCountdown.setText("");
+            } else {
+                int diff = (24 * 60 - cur) + subuh;
+                if (prayerCountdown != null) {
+                    int h2 = diff / 60;
+                    int m2 = diff % 60;
+                    prayerCountdown.setText(String.format(Locale.US, "SUBUH %02d:%02d", h2, m2));
+                }
+            }
+        } else {
+            int diff = t[next] - cur;
+            if (prayerCountdown != null && diff >= 0) {
+                int h2 = diff / 60;
+                int m2 = diff % 60;
+                String[] names = {"SUBUH", "DZUHUR", "ASHAR", "MAGHRIB", "ISYA"};
+                prayerCountdown.setText(String.format(Locale.US, "%s -%02d:%02d", names[next], h2, m2));
+            } else if (prayerCountdown != null) {
+                prayerCountdown.setText("");
+            }
+        }
         for (int i = 0; i < 5; i++) {
             prayerTime[i].setText(t[i] < 0 ? "--:--"
                     : String.format(Locale.US, "%02d:%02d", t[i] / 60 % 24, t[i] % 60));
-            boolean on = i == next;
+            boolean on = (next == i) || (next == 0 && i == 0 && cur > t[4] && t[4] >= 0); // approximate
+            // better: if next == i and not wrapped case? simplified
+            if (next >= 0 && !(next == 0 && cur > t[4] && t[4] >= 0 && i != 0)) {
+                on = (i == next);
+            } else if (next == 0 && cur > (t[4] >= 0 ? t[4] : 0) && t[4] >= 0) {
+                on = (i == 0); // next is subuh tomorrow
+            }
             prayerName[i].setTextColor(on ? Color.WHITE : 0x99FFFFFF);
             prayerTime[i].setTextColor(on ? Color.WHITE : 0xB3FFFFFF);
             prayerTime[i].setTypeface(Typeface.create("sans-serif-medium", on ? Typeface.BOLD : Typeface.NORMAL));
         }
+        updateCalendarCard();
     }
 
     /**
